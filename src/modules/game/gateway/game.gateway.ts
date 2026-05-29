@@ -204,9 +204,11 @@ export class GameGateway implements OnGatewayDisconnect {
       winnerPlayerId: game.winnerPlayerId,
       selectedNumbers: Array.from(game.selectedNumbers),
       timerExpiresAt: game.timerExpiresAt,
+      timerDurationRemaining: game.timerExpiresAt ? Math.max(0, Math.ceil((game.timerExpiresAt - Date.now()) / 1000)) : undefined,
       pendingSelection: game.pendingSelection,
       disconnectedUsername: game.disconnectedUsername,
       disconnectExpiresAt: game.disconnectExpiresAt,
+      disconnectDurationRemaining: game.disconnectExpiresAt ? Math.max(0, Math.ceil((game.disconnectExpiresAt - Date.now()) / 1000)) : undefined,
       players: game.players.map(p => ({
         playerId: p.playerId,
         username: p.username,
