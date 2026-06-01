@@ -432,6 +432,69 @@ export class GameService {
     activeGames.delete(roomCode);
   }
 
+  leaveRoom(roomCode: string, socketId: string): void {
+    const game = activeGames.get(roomCode);
+    if (!game) return;
+
+    game.players = game.players.filter(p => p.socketId !== socketId);
+
+    if (game.players.length === 0) {
+      this.cleanGame(roomCode);
+      return;
+    }
+
+    if (game.status === 'PLAYING') {
+      const remainingPlayer = game.players[0];
+      game.status = 'FINISHED';
+      game.winnerPlayerId = remainingPlayer.playerId;
+      this.clearTurnTimer(roomCode);
+    } else if (game.status === 'FINISHED') {
+      this.cleanGame(roomCode);
+    }
+  }
+
+  async requestPlayAgain(roomCode: string, socketId: string): Promise<ActiveGame> {
+    const game = activeGames.get(roomCode);
+    if (!game) {
+      throw new NotFoundException('Room not found');
+    }
+
+    if (game.status !== 'FINISHED') {
+      throw new BadRequestException('Game is not finished yet');
+    }
+
+    const player = game.players.find(p => p.socketId === socketId);
+    if (!player) {
+      throw new NotFoundException('Player not in this room');
+    }
+
+    if (!game.playAgainRequests) {
+      game.playAgainRequests = [];
+    }
+
+    if (!game.playAgainRequests.includes(socketId)) {
+      game.playAgainRequests.push(socketId);
+    }
+
+    if (game.playAgainRequests.length === 2) {
+      game.status = 'WAITING';
+      game.selectedNumbers = new Set<number>();
+      game.winnerPlayerId = undefined;
+      game.timerExpiresAt = undefined;
+      game.pendingSelection = undefined;
+      game.playAgainRequests = [];
+
+      for (const p of game.players) {
+        p.board = undefined;
+        p.isReady = false;
+        p.completedLines = 0;
+        p.completedPatterns = new Set<string>();
+      }
+    }
+
+    return game;
+  }
+
   async reconnectRoom(roomCode: string, username: string, newSocketId: string): Promise<ActiveGame> {
     const game = activeGames.get(roomCode);
     if (!game) {
@@ -493,7 +556,21 @@ export class GameService {
     }
 
     if (!targetGame || !targetRoomCode) return undefined;
-    if (targetGame.status === 'FINISHED') return targetRoomCode;
+    if (targetGame.status === 'FINISHED') {
+      const player = targetGame.players.find(p => p.socketId === socketId);
+      if (player) {
+        const existing = this.disconnectTimeouts.get(player.playerId);
+        if (existing) clearTimeout(existing);
+
+        const timeout = setTimeout(() => {
+          this.disconnectTimeouts.delete(player.playerId);
+          this.cleanGame(targetRoomCode!);
+        }, 30000);
+
+        this.disconnectTimeouts.set(player.playerId, timeout);
+      }
+      return targetRoomCode;
+    }
 
     const player = targetGame.players.find(p => p.socketId === socketId);
     if (!player) return targetRoomCode;

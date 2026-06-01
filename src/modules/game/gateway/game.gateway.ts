@@ -5,6 +5,7 @@ import {
   ConnectedSocket,
   MessageBody,
   OnGatewayDisconnect,
+  OnGatewayConnection,
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
 import { GameService } from "../services/game.service";
@@ -37,7 +38,6 @@ export class GameGateway implements OnGatewayDisconnect {
         winnerPlayerId: game.winnerPlayerId,
         game: this.serializeGame(game),
       });
-      this.gameService.cleanGame(roomCode);
     };
   }
 
@@ -184,8 +184,6 @@ export class GameGateway implements OnGatewayDisconnect {
           winnerPlayerId: game.winnerPlayerId,
           game: this.serializeGame(game),
         });
-        // Remove game from memory
-        this.gameService.cleanGame(game.roomCode);
       } else {
         this.server.to(game.roomCode).emit(SocketEvents.TURN_CHANGED, {
           currentTurnPlayerId: game.currentTurnPlayerId,
@@ -194,6 +192,48 @@ export class GameGateway implements OnGatewayDisconnect {
     } catch (err: any) {
       client.emit(SocketEvents.ERROR, { message: err.message || 'Error selecting number' });
     }
+  }
+
+  @SubscribeMessage(SocketEvents.REQUEST_PLAY_AGAIN)
+  async handleRequestPlayAgain(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { roomCode: string },
+  ) {
+    try {
+      const game = await this.gameService.requestPlayAgain(payload.roomCode, client.id);
+      this.server.to(game.roomCode).emit(SocketEvents.GAME_UPDATED, this.serializeGame(game));
+    } catch (err: any) {
+      client.emit(SocketEvents.ERROR, { message: err.message || 'Error requesting play again' });
+    }
+  }
+
+  @SubscribeMessage(SocketEvents.LEAVE_ROOM)
+  async handleLeaveRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { roomCode: string },
+  ) {
+    try {
+      this.gameService.leaveRoom(payload.roomCode, client.id);
+      client.leave(payload.roomCode);
+
+      const game = this.gameService.getGame(payload.roomCode);
+      if (game) {
+        this.server.to(payload.roomCode).emit(SocketEvents.GAME_UPDATED, this.serializeGame(game));
+      }
+    } catch (err: any) {
+      client.emit(SocketEvents.ERROR, { message: err.message || 'Error leaving room' });
+    }
+  }
+
+  @SubscribeMessage('SYNC_CLOCK')
+  handleSyncClock(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { clientTime: number },
+  ) {
+    client.emit('SYNC_CLOCK_RESPONSE', {
+      clientTime: payload.clientTime,
+      serverTime: Date.now(),
+    });
   }
 
   private serializeGame(game: ActiveGame) {
@@ -209,6 +249,7 @@ export class GameGateway implements OnGatewayDisconnect {
       disconnectedUsername: game.disconnectedUsername,
       disconnectExpiresAt: game.disconnectExpiresAt,
       disconnectDurationRemaining: game.disconnectExpiresAt ? Math.max(0, Math.ceil((game.disconnectExpiresAt - Date.now()) / 1000)) : undefined,
+      playAgainRequests: game.playAgainRequests || [],
       players: game.players.map(p => ({
         playerId: p.playerId,
         username: p.username,

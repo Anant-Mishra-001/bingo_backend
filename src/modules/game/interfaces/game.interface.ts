@@ -14,4 +14,5 @@ export interface ActiveGame {
   };
   disconnectedUsername?: string;
   disconnectExpiresAt?: number;
+  playAgainRequests?: string[];
 }
